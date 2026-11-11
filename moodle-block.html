@@ -1,0 +1,20 @@
+<!-- Replace YOUR-SERVICE.onrender.com with your own Render URL.
+     Paste in the Moodle HTML block's HTML/source editing mode. -->
+<div style="padding:12px;border:1px solid #ddd;border-radius:10px">
+  <strong>✨ Gemini Study Assistant</strong>
+  <p>Open a separate, resizable study popup.</p>
+  <button type="button" id="open-study-popup" style="background:#7054d7;color:white;border:0;padding:11px 16px;border-radius:8px;cursor:pointer">Open study popup</button>
+  <a href="https://YOUR-SERVICE.onrender.com/" target="_blank" rel="noopener noreferrer" style="margin-left:12px">Open in a tab</a>
+</div>
+<script>
+(function () {
+  var button = document.getElementById('open-study-popup');
+  if (!button) return;
+  button.addEventListener('click', function () {
+    var url = 'https://YOUR-SERVICE.onrender.com/';
+    var popup = window.open(url, 'StudyPopup',
+      'popup=yes,width=490,height=720,left=100,top=100,resizable=yes,scrollbars=yes');
+    if (popup) popup.focus();
+  });
+})();
+</script>
