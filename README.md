@@ -1,12 +1,14 @@
 # Gemini Study Popup — Render-ready
 
-Private, password-protected Gemini study assistant with a standalone popup window for Moodle. Includes a simple PDF URL viewer. **Use only if AI assistance is allowed under your exam rules.**
+Private, password-protected Gemini study assistant with a standalone popup window for Moodle. Includes photo upload, screenshot paste (Ctrl+V), drag-and-drop, and a simple PDF URL viewer. **Use only if AI assistance is allowed under your exam rules.**
 
 ## Features
 
 - Server-side Gemini key (never exposed in Moodle HTML or the browser)
 - Password login, secure HttpOnly cookies, CSRF protection for the API, conservative CSP
 - Small chat history (last five exchanges) while the page remains open
+- Send a JPG/PNG/WebP photo or paste a screenshot, with a local preview
+- Image upload limit 6 MB; server validates image bytes and strips image metadata before sending to Gemini
 - Separate browser popup (not an iframe)
 - PDF viewer for direct HTTPS URLs, with fallback link
 - No database and no chat persistence
@@ -51,7 +53,13 @@ Visit `http://127.0.0.1:5000/login`. Local development requires `LOCAL_DEV=1` to
 ## Notes and limitations
 
 - The PDF viewer is URL-based. Moodle protected PDF links may not render in a separate Render window because of authentication or frame restrictions. Use the `Open in tab` link or publicly accessible documents that you have permission to use.
-- No PDF upload, server-side PDF parsing, or chat persistence is included.
+- No PDF upload, server-side PDF parsing, or chat persistence is included. Photos are processed in memory; they are not stored by the app. Google handles the transmitted data according to your Gemini API terms.
 - Keep service password private. The in-memory login attempt limiter is per instance and is not a substitute for a gateway/WAF on a public app.
 - API use may incur Google charges or quotas. The model identifier is set by `GEMINI_MODEL`; verify model availability on your Google account.
 - Do not send confidential student data or exam materials to third-party AI without permission.
+
+## Upgrade existing Render service
+
+Replace the files in the same Git repository with the files from this ZIP, commit, and push. Render will rebuild and deploy automatically if auto-deploy is enabled (otherwise use Manual Deploy → Deploy latest commit). **Keep the existing environment variables and working GEMINI_MODEL unchanged.** No Moodle HTML changes are needed; the URL stays the same.
+
+In the chat window, click **📎 Photo**, paste an image with Ctrl+V, or drag an image into the composer. JPG/PNG/WebP up to 6 MB supported. Photos and questions are sent to Google Gemini; do not send sensitive or restricted information. This is a visible, ordinary study interface, not exam monitoring evasion.

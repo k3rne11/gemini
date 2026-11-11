@@ -1,4 +1,7 @@
+import base64
 import hmac
+import io
+import json
 import os
 import secrets
 import time
@@ -6,6 +9,7 @@ from collections import defaultdict, deque
 from functools import wraps
 
 import requests
+from PIL import Image, UnidentifiedImageError
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -23,7 +27,7 @@ def create_app():
         SESSION_COOKIE_SECURE=os.environ.get('LOCAL_DEV') != '1',
         SESSION_COOKIE_SAMESITE='Lax',
         PERMANENT_SESSION_LIFETIME=60 * 60 * 8,
-        MAX_CONTENT_LENGTH=30_000,
+        MAX_CONTENT_LENGTH=10 * 1024 * 1024,
     )
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
     attempts = defaultdict(deque)
@@ -90,20 +94,63 @@ def create_app():
     def index():
         return render_template('index.html', csrf=session['csrf'])
 
+    @app.errorhandler(413)
+    def too_large(_):
+        return jsonify(error='Request too large; use an image under 6 MB.'), 413
+
     @app.post('/api/chat')
     @logged_in
     def chat():
         if request.headers.get('X-CSRF-Token') != session.get('csrf'):
             return jsonify(error='Invalid request token'), 403
-        if request.mimetype != 'application/json':
-            return jsonify(error='JSON required'), 415
-        payload = request.get_json(silent=True) or {}
-        question = payload.get('message', '')
-        history = payload.get('history', [])
-        if not isinstance(question, str) or not (1 <= len(question.strip()) <= 4000):
-            return jsonify(error='Message must be 1–4000 characters'), 400
+        if request.mimetype == 'multipart/form-data':
+            question = request.form.get('message', '')
+            try:
+                history = json.loads(request.form.get('history', '[]'))
+            except (ValueError, TypeError):
+                return jsonify(error='Invalid history JSON'), 400
+            upload = request.files.get('image')
+        elif request.mimetype == 'application/json':
+            payload = request.get_json(silent=True) or {}
+            question = payload.get('message', '')
+            history = payload.get('history', [])
+            upload = None
+        else:
+            return jsonify(error='JSON or multipart form required'), 415
+        if not isinstance(question, str) or len(question) > 4000:
+            return jsonify(error='Message must be under 4000 characters'), 400
         if not isinstance(history, list) or len(history) > 10:
             return jsonify(error='Invalid conversation history'), 400
+        image_part = None
+        if upload and upload.filename:
+            raw = upload.stream.read(6 * 1024 * 1024 + 1)
+            if len(raw) > 6 * 1024 * 1024:
+                return jsonify(error='Image must be under 6 MB'), 413
+            try:
+                with Image.open(io.BytesIO(raw)) as im:
+                    if im.format not in ('JPEG', 'PNG', 'WEBP'):
+                        return jsonify(error='Only JPG, PNG, WebP images supported'), 400
+                    if im.width * im.height > 12_000_000:
+                        return jsonify(error='Image resolution too large'), 400
+                    # Re-encode to JPEG to strip metadata and reduce bandwidth.
+                    if im.mode in ('RGBA', 'LA') or ('transparency' in im.info):
+                        im = im.convert('RGBA')
+                        background = Image.new('RGB', im.size, (255, 255, 255))
+                        background.paste(im, mask=im.getchannel('A'))
+                        im = background
+                    else:
+                        im = im.convert('RGB')
+                    im.thumbnail((2200, 2200))
+                    output = io.BytesIO()
+                    im.save(output, format='JPEG', quality=82, optimize=True)
+                image_part = {'inline_data': {
+                    'mime_type': 'image/jpeg',
+                    'data': base64.b64encode(output.getvalue()).decode('ascii')
+                }}
+            except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+                return jsonify(error='Invalid or unsupported image'), 400
+        if not question.strip() and image_part is None:
+            return jsonify(error='Enter a message or attach an image'), 400
         contents = []
         for turn in history:
             if (not isinstance(turn, dict) or turn.get('role') not in ('user', 'model')
@@ -111,7 +158,10 @@ def create_app():
                     or not 1 <= len(turn['text']) <= 4000):
                 return jsonify(error='Invalid conversation history'), 400
             contents.append({'role': turn['role'], 'parts': [{'text': turn['text']}]})
-        contents.append({'role': 'user', 'parts': [{'text': question.strip()}]})
+        user_parts = [{'text': question.strip() or 'Describe this image and explain its contents.'}]
+        if image_part:
+            user_parts.append(image_part)
+        contents.append({'role': 'user', 'parts': user_parts})
         model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
         # Only permit model identifier characters; no user-controlled URLs.
         if not all(c.isalnum() or c in '-_.' for c in model):
